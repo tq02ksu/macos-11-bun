@@ -2243,11 +2243,6 @@ pub struct Parser<'i, Enc: Encoding> {
     /// recently consumed `\n`/`\r`). Set in `newline()`.
     pub line_start_pos: Pos,
     pub line_indent: Indent,
-    /// A tab was seen between the line's s-indent (or post-indicator
-    /// additional_parent_indent position) and the current token's content.
-    /// [62]/[63] s-indent is spaces only; tab here is s-separate-in-line, valid
-    /// before [197] flow-in-block content but not before a [185] compact
-    /// construct or a sibling block entry. Reset on newline().
     pub tab_after_indent: bool,
     pub line: Line,
     pub token: Token<Enc>,
@@ -2273,12 +2268,6 @@ pub struct Parser<'i, Enc: Encoding> {
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
-    /// Total number of nodes that may be reached through alias expansion in a
-    /// single document. Repeated merges of the same anchor (`<<: [*a, *a, ...]`)
-    /// charge the anchor's full subtree per occurrence even though merge keys
-    /// deduplicate, so this needs enough headroom for legitimate documents that
-    /// reuse a large anchor many times while still rejecting exponential
-    /// (billion-laughs style) expansion.
     pub const MAX_ALIAS_EXPANSION: usize = 16 * 1024 * 1024;
 
     pub fn init(bump: &'i bun_alloc::Arena, input: &'i [Enc::Unit]) -> Self {
@@ -2556,12 +2545,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Ok(Document { root, directives })
     }
 
-    /// [149] c-ns-flow-map-json-key-entry — when a JSON-style key (quoted
-    /// scalar, flow sequence, flow mapping) appears in flow context, the scan
-    /// for a following `:` is in `flow-key` (per [150] c-s-implicit-json-key),
-    /// so an adjacent `:` with no separation is recognized. Returns true iff
-    /// FlowKey was pushed; the caller must then `unset_json_key()` once after
-    /// the relevant scan, regardless of its result.
     fn maybe_set_json_key(&mut self, allowed: bool) -> Result<bool, ParseError> {
         if allowed && self.context.get() == Context::FlowIn {
             self.context.set(Context::FlowKey)?;
@@ -2576,10 +2559,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
     }
 
-    /// [142]/[143] Consume the `?` and parse the flow explicit-entry key.
-    /// Returns e-node `null` when nothing precedes `,` / `}` / `]` / `:`.
-    /// The caller (parse_flow_mapping / parse_flow_sequence) then handles the
-    /// optional `:` and value with its normal entry path.
     fn parse_flow_explicit_key(&mut self) -> Result<Expr, ParseError> {
         debug_assert!(matches!(self.token.data, TokenData::MappingKey));
         let start = self.token.start;
@@ -2606,10 +2585,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             return Err(Self::unexpected_token());
         }
 
-        // Consume c-ns-properties here (still in flow-in) so the post-property
-        // re-scan tokenizes `:b` as ns-plain-first per [126], same as the
-        // first scan above. The FlowKey wrap is only for the content parse so
-        // a JSON-style key early-returns at the trailing `:`.
         let mut scanned_tag: Option<Token<Enc>> = None;
         let mut scanned_anchor: Option<Token<Enc>> = None;
         loop {
@@ -2679,11 +2654,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         ) {
                             Expr::init(E::Null {}, self.token.start.loc())
                         } else {
-                            // [147] the value is ns-flow-node; threading the
-                            // value's own indent as current_mapping_indent
-                            // makes the Scalar arm's cmi==scalar_indent check
-                            // return the bare scalar instead of consuming a
-                            // trailing `: …` as a nested mapping.
                             self.parse_node(ParseNodeOptions {
                                 current_mapping_indent: Some(self.token.indent),
                                 ..Default::default()
@@ -2814,11 +2784,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         ..Default::default()
                     })?;
                 } else {
-                    // [147] the value is ns-flow-node; threading the value's
-                    // own indent as current_mapping_indent makes the Scalar
-                    // arm's cmi==scalar_indent check return the bare scalar
-                    // instead of consuming a trailing `: …` as a nested
-                    // mapping (`{a: b: c}`).
                     let value = self.parse_node(ParseNodeOptions {
                         current_mapping_indent: Some(self.token.indent),
                         ..Default::default()
@@ -2986,11 +2951,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         }
 
-        // The block_indents stack drives scan()'s flow-context indent guard
-        // (continuation lines in a flow collection must be at indent > the
-        // enclosing block's). When reached via the implicit-pair path from a
-        // flow collection (`["a": b]`), the key's column is not a block
-        // boundary — pushing it would reject `["a":\nb]` per [149]/[80].
         let pushed_block_indent = !matches!(self.context.get(), Context::FlowIn | Context::FlowKey);
         if pushed_block_indent {
             self.block_indents.push(mapping_indent)?;
@@ -3420,10 +3380,6 @@ impl<Enc: Encoding> NodeProperties<Enc> {
         implicit_key_line: Line,
     ) -> Result<ImplicitKeyAnchors, ParseError> {
         if let Some(mapping_anchor) = &self.has_mapping_anchor {
-            // Two anchors recorded: the outer anchors the [200] block
-            // collection; the inner anchors the implicit first key. The key's
-            // c-ns-properties are in BLOCK-KEY context (s-separate-in-line),
-            // so the inner anchor must share the key's line.
             let inner = self.has_anchor.as_ref();
             if inner.is_some_and(|t| t.line != implicit_key_line) {
                 return Err(ParseError::MultipleAnchors);
@@ -3592,15 +3548,6 @@ enum BlockIndentedKind {
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
-    /// [185] `s-l+block-indented(n, c)` dispatch shared by the block-mapping
-    /// value (`:`), explicit key (`?`), and block-sequence item (`-`) paths.
-    /// The current token is the post-indicator token.
-    ///
-    /// Owns the property loop: anchor/tag tokens are consumed here so the
-    /// indent rules below re-run on what follows ([161] c-ns-properties may
-    /// stand alone as e-scalar when the next token belongs to the parent).
-    /// A second anchor or tag falls through to `_` so parse_node's
-    /// mapping-anchor split applies ([200] collection vs first-key).
     fn parse_block_indented(
         &mut self,
         n: Indent,
@@ -3611,20 +3558,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let mut value_tag: Option<Token<Enc>> = None;
         let mut value_anchor: Option<Token<Enc>> = None;
 
-        // The [196] indent dispatch below is block-semantics; in flow context
-        // ([149]/[80] s-separate(n,FLOW-IN) = s-separate-lines, any indent on
-        // a continuation line) it does not apply. Reached via the
-        // implicit-pair fallthrough when `parse_block_mapping` is entered
-        // from a flow-seq item (`["a":\nb]`).
         let in_flow = matches!(self.context.get(), Context::FlowIn | Context::FlowKey);
 
         loop {
-            // [196] s-l+block-node(n) reaches content via [197] flow-in-block
-            // (s-separate-lines(n+1)) or [200] block-collection. Either way a
-            // token on a later line at indent ≤ n belongs to the parent —
-            // properties collected so far attach to e-scalar per [161].
-            // [201] seq-space: a nested block sequence may sit at indent n in
-            // BLOCK-OUT, but needs n+1 in BLOCK-IN.
             if !in_flow && self.token.line != indicator_line {
                 let belongs_to_parent = if matches!(self.token.data, TokenData::SequenceEntry)
                     && kind != BlockIndentedKind::SeqEntry
@@ -3634,16 +3570,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.token.indent.is_less_than_or_equal(n)
                 };
                 if belongs_to_parent {
-                    // The post-property re-scan baked `value_tag` into a plain
-                    // scalar's resolution (`ScanOptions.tag`); if that scalar
-                    // is now abandoned to the parent, rewind to its start and
-                    // re-scan tag-neutral so the sibling key resolves under
-                    // the default schema. Only plain single-line scalars are
-                    // tag-resolved at scan time; quoted scalars ignore
-                    // ScanOptions.tag (and their token.start is past the
-                    // opening quote, so rewind would be wrong); multiline
-                    // plain scalars may have advanced parser state across
-                    // lines that a positional rewind cannot fully restore.
                     if value_tag.is_some()
                         && matches!(
                             &self.token.data,
@@ -3657,10 +3583,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         self.pos = self.token.start;
                         self.line = self.token.line;
                         self.line_indent = self.token.indent;
-                        // tab_after_indent is preserved: the original scan
-                        // recorded it for this token's leading whitespace,
-                        // and the re-scan (in_indent_position=false) won't
-                        // re-detect it since pos is already past the tab.
                         self.scan(ScanOptions::default())?;
                     }
                     return self.props_to_e_node(&value_tag, &value_anchor, indicator_start.loc());
@@ -3674,10 +3596,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 TokenData::Tag(_) if value_tag.is_none() => {
                     value_tag = Some(self.token.clone());
                 }
-                // [185] a compact construct on the indicator's line must be at
-                // indent ≥ n+1 via s-indent (spaces only); tab separation
-                // either leaves the token at the line's natural indent (≤ n)
-                // or, when spaces preceded the tab, taints tab_after_indent.
                 TokenData::SequenceEntry | TokenData::MappingKey
                     if self.token.line == indicator_line
                         && (self.token.indent.is_less_than_or_equal(n)
@@ -3871,10 +3789,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         if self.context.get() == Context::FlowKey {
                             return Ok(copy);
                         }
-                        // [154] ns-s-implicit-yaml-key uses s-separate-in-line
-                        // (same line only); [145] in flow-map uses s-separate
-                        // (spans lines, per yaml-test-suite 4MUZ etc.),
-                        // handled by the FlowKey return above.
                         if alias_line != self.token.line && !opts.explicit_mapping_key {
                             return Err(ParseError::MultilineImplicitKey);
                         }
@@ -4059,11 +3973,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                 TokenData::MappingKey => {
                     if matches!(self.context.get(), Context::FlowIn | Context::FlowKey) {
-                        // Only reachable when a flow `?` appears in a position
-                        // where ns-flow-pair is not allowed (e.g. as a flow-map
-                        // value, or after another `?`). Both parse_flow_mapping
-                        // and parse_flow_sequence intercept `?` themselves for
-                        // the legitimate paths.
                         return Err(Self::unexpected_token());
                     }
                     // [195] each `?` sits at s-indent(n) (spaces only).
@@ -4119,10 +4028,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             break 'node Expr::init(E::Null {}, self.token.start.loc());
                         }
                     }
-                    // [200]/[193] split: a property on the `:` line is the
-                    // e-node key's (`!!str : x` → key ""); on a prior line
-                    // it is the [200] block-collection's. Only the key's tag
-                    // affects resolution.
                     let colon_line = self.token.line;
                     let key_tag = if node_props.tag_line() == Some(colon_line) {
                         node_props.take_tag()
@@ -4149,13 +4054,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         self.anchors
                             .put(Enc::key_bytes(mapping_anchor.slice(self.input)), mapping)?;
                     }
-                    // Clear has_anchor so the post-loop fallback doesn't
-                    // re-register the inner anchor on the mapping. The
-                    // remaining fields reach the post-loop guards: this
-                    // matches main's behavior (rejects `!!a\n!!b\n: x` and
-                    // `&a\n&b\n&c : x`), but also over-rejects the valid
-                    // `&outer\n&inner : x` — pre-existing; the Scalar arm
-                    // avoids it via `return Ok`.
                     node_props.has_anchor = None;
                     break 'node mapping;
                 }
@@ -4203,11 +4101,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             // `? sky\n: blue`). This scalar is not a key.
                             break 'node scalar.data.to_expr(scalar_start, self.input, self.bump);
                         }
-                        // [192] ns-l-block-map-implicit-entry: the key is at
-                        // s-indent(n) (spaces only). A tab between s-indent
-                        // and the key means it cannot be a sibling block-map
-                        // entry; in compact position ([185]) it cannot be the
-                        // compact mapping's first key either.
                         if scalar_tab_after_indent
                             && matches!(self.context.get(), Context::BlockOut | Context::BlockIn)
                         {
@@ -5595,10 +5488,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     fn scan(&mut self, opts: ScanOptions) -> Result<(), ParseError> {
         // ScanCtx state inlined
         let mut count_indentation = opts.first_scan || opts.additional_parent_indent.is_some();
-        // Tracks whether we are still in leading whitespace (after a newline
-        // or after an indicator with additional_parent_indent), so a tab at
-        // this position can taint `tab_after_indent`. Unlike count_indentation
-        // it stays true through the space arm.
         let mut in_indent_position = count_indentation;
         if in_indent_position {
             self.tab_after_indent = false;
@@ -5618,10 +5507,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
                 0x2D /* '-' */ => {
                     let start = self.pos;
-                    // [203] c-directives-end is line-starting at column 0.
-                    // `line_indent == 0` is the line's indent, true everywhere
-                    // on a column-0 line; is_at_line_start() (pos ==
-                    // line_start_pos) confirms we are at the actual start.
                     if self.is_at_line_start()
                         && self.line_indent == Indent::NONE
                         && self.remain_starts_with(Enc::literal(b"---"))
@@ -5812,11 +5697,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             let indicator_indent = self.line_indent;
                             self.inc(1);
                             let mut tok = self.scan_literal_scalar()?;
-                            // Token.indent for a block scalar is the
-                            // indicator's s-indent, not the auto-detected
-                            // content indent — keeps belongs_to_parent and
-                            // other indent comparisons consistent across
-                            // scalar kinds.
                             tok.indent = indicator_indent;
                             break 'next tok;
                         }
@@ -5903,14 +5783,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         return Err(ParseError::TabIndentation);
                     }
                     if in_indent_position {
-                        // [63] s-indent is spaces only. A tab here is
-                        // s-separate-in-line — valid before [197]
-                        // flow-in-block content, but not before a [185]
-                        // compact construct or a sibling block entry. The
-                        // parser-side checks distinguish; here we record the
-                        // taint and drop additional_parent_indent (so the
-                        // resulting token's indent is what the *spaces*
-                        // reached, not column-based).
                         self.tab_after_indent = true;
                         additional_parent_indent = None;
                     }
