@@ -27,8 +27,8 @@
   // Zig
   "zig.initialSetupDone": true,
   "zig.buildOption": "build",
-  "zig.zls.zigLibPath": "${workspaceFolder}/src/deps/zig/lib",
-  "zig.buildArgs": ["-Dgenerated-code=./build/codegen"],
+  "zig.buildOnSaveArgs": ["-Dgenerated-code=./build/codegen"],
+  "zig.libPath": "${workspaceFolder}/src/deps/zig/lib",
   "zig.zls.buildOnSaveStep": "check",
   // "zig.zls.enableBuildOnSave": true,
   // "zig.buildOnSave": true,
