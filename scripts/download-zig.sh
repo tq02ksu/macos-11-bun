@@ -37,7 +37,15 @@ case $(uname -ms) in
   ;;
 esac
 
-url="https://ziglang.org/builds/zig-${target}-${arch}-${zig_version}.tar.xz"
+builds_url="https://ziglang.org/builds/zig-${target}-${arch}-${zig_version}.tar.xz"
+release_url="https://ziglang.org/download/${zig_version}/zig-${target}-${arch}-${zig_version}.tar.xz"
+urls=("${builds_url}")
+
+if [[ "${zig_version}" != *-dev* ]]; then
+  urls=("${release_url}" "${builds_url}")
+fi
+
+url="${urls[0]}"
 dest="$(pwd)/.cache/zig-${zig_version}.tar.xz"
 extract_at="$(pwd)/.cache/zig"
 
@@ -67,15 +75,35 @@ update_repo_if_needed() {
 }
 
 if [ -e "${extract_at}/.version" ]; then
-  if [ "$(cat "${extract_at}/.version")" == "${url}" ]; then
+  if grep -q "${zig_version}" "${extract_at}/.version"; then
     update_repo_if_needed
     exit 0
   fi
 fi
 
+if [ -e "${dest}" ] && ! tar -tf "${dest}" >/dev/null 2>&1; then
+  rm -f "${dest}"
+fi
+
 if ! [ -e "${dest}" ]; then
   printf -- "-- Downloading Zig v%s\n" "${zig_version}"
-  curl -o "$dest" -L "$url"
+  downloaded_url=""
+
+  for candidate in "${urls[@]}"; do
+    printf -- "-- Trying %s\n" "${candidate}"
+    if curl -f -L -o "${dest}" "${candidate}"; then
+      downloaded_url="${candidate}"
+      break
+    fi
+    rm -f "${dest}"
+  done
+
+  if [ -z "${downloaded_url}" ]; then
+    printf "error: failed to download Zig v%s\n" "${zig_version}"
+    exit 1
+  fi
+
+  url="${downloaded_url}"
 fi
 
 rm -rf "${extract_at}"

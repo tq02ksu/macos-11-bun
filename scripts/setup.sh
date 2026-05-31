@@ -10,6 +10,21 @@ C_RESET="\e[0m"
 has_exec() {
   which "$1" >/dev/null 2>&1 || return 1
 }
+
+resolve_path() {
+  local target="$1"
+  local target_dir
+  local target_base
+
+  target_dir=$(dirname "$target")
+  target_base=$(basename "$target")
+
+  (
+    cd "$target_dir" >/dev/null 2>&1 && \
+      printf "%s/%s\n" "$(pwd -P)" "$target_base"
+  )
+}
+
 fail() {
   has_failure=1
   printf "${C_RED}setup error${C_RESET}: %s\n" "$@"
@@ -94,19 +109,19 @@ printf "${C_BLUE}bun v${BUN_VERSION} is located at ./build/bun-debug${C_RESET}\n
 
 if has_exec bun-debug; then
   bun_is_at=$(which bun-debug)
-  if [ "$(realpath "$bun_is_at")" != "$(realpath "./build/bun-debug")" ]; then
+  if [ "$(resolve_path "$bun_is_at")" != "$(resolve_path "./build/bun-debug")" ]; then
     printf "\n"
     printf "${C_RED}"'Your $PATH is not configured correctly!\n'"${C_RESET}"
     printf "\n"
     printf "which bun-debug --> %s\n" "${bun_is_at}"
     printf "\n"
     printf "You should remove this binary and switch it to ./build:\n"
-    printf '  export PATH="$PATH:%s"\n' $(realpath "$PWD/build")
+    printf '  export PATH="$PATH:%s"\n' "$(resolve_path "$PWD/build")"
   fi
 else
   printf "\n"
   printf "You should add ./build to your path:\n"
-  printf '  export PATH="$PATH:%s"\n' $(realpath "$PWD/build")
+  printf '  export PATH="$PATH:%s"\n' "$(resolve_path "$PWD/build")"
 fi
 printf "\n"
 printf "To rebuild bun, run '${C_GREEN}bun run build${C_RESET}'\n\n"

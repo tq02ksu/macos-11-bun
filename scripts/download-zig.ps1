@@ -4,7 +4,13 @@ $ZigVersion="0.13.0"
 $Target="windows"
 $Arch="x86_64"
 
-$Url = "https://ziglang.org/builds/zig-${Target}-${Arch}-${ZigVersion}.zip"
+$BuildsUrl = "https://ziglang.org/builds/zig-${Target}-${Arch}-${ZigVersion}.zip"
+$ReleaseUrl = "https://ziglang.org/download/$ZigVersion/zig-${Target}-${Arch}-${ZigVersion}.zip"
+$Urls = @($BuildsUrl)
+
+if ($ZigVersion -notmatch "-dev") {
+  $Urls = @($ReleaseUrl, $BuildsUrl)
+}
 $CacheDir = (mkdir -Force (Join-Path $PSScriptRoot "../.cache"))
 $TarPath = Join-Path $CacheDir "zig-${ZigVersion}.zip"
 $OutDir = Join-Path $CacheDir "zig"
@@ -21,12 +27,21 @@ $null = mkdir -Force $OutDir
 Push-Location $CacheDir
 try {
   if (!(Test-Path $TarPath)) {
-    try {
-      Write-Host "-- Downloading Zig"
-      Invoke-RestMethod $Url -OutFile $TarPath
-    } catch {
-      Write-Error "Failed to fetch Zig from: $Url"
-      throw $_
+    $Downloaded = $false
+    foreach ($Url in $Urls) {
+      try {
+        Write-Host "-- Downloading Zig from: $Url"
+        Invoke-RestMethod $Url -OutFile $TarPath
+        $Downloaded = $true
+        break
+      } catch {
+        Remove-Item -Force -ErrorAction SilentlyContinue $TarPath
+      }
+    }
+
+    if (-not $Downloaded) {
+      Write-Error "Failed to fetch Zig from all known URLs"
+      throw "Zig download failed"
     }
   }
 
