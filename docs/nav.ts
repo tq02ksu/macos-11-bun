@@ -386,6 +386,9 @@ export default {
     page("project/building-windows", "Building Windows", {
       description: "Learn how to setup a development environment for contributing to the Windows build of Bun.",
     }),
+    page("project/building-macos-11", "Building macOS 11", {
+      description: "Notes on building Bun from source on macOS 11, including ICU and WebKit pitfalls.",
+    }),
     page("project/licensing", "License", {
       description: `Bun is a MIT-licensed project with a large number of statically-linked dependencies with various licenses.`,
     }),
