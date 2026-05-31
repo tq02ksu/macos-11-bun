@@ -503,6 +503,43 @@ else()
     set(libWTF "libWTF")
 endif()
 
+macro(BUN_CONFIGURE_APPLE_ICU)
+    if(ICU_INCLUDE_DIR AND EXISTS "${ICU_INCLUDE_DIR}/unicode/uidna.h")
+        set(ICU_INCLUDE_DIR "${ICU_INCLUDE_DIR}")
+    elseif(DEFINED ENV{ICU_INCLUDE_DIR} AND EXISTS "$ENV{ICU_INCLUDE_DIR}/unicode/uidna.h")
+        set(ICU_INCLUDE_DIR "$ENV{ICU_INCLUDE_DIR}")
+    else()
+        find_path(ICU_INCLUDE_DIR
+            NAMES unicode/uidna.h
+            PATHS
+                /opt/local/include
+                /opt/homebrew/opt/icu4c/include
+                /usr/local/opt/icu4c/include
+        )
+    endif()
+
+    if(ICU_LIBRARY_DIR AND EXISTS "${ICU_LIBRARY_DIR}")
+        set(ICU_LIBRARY_DIR "${ICU_LIBRARY_DIR}")
+    elseif(DEFINED ENV{ICU_LIBRARY_DIR} AND EXISTS "$ENV{ICU_LIBRARY_DIR}")
+        set(ICU_LIBRARY_DIR "$ENV{ICU_LIBRARY_DIR}")
+    elseif(ICU_INCLUDE_DIR)
+        get_filename_component(ICU_PREFIX "${ICU_INCLUDE_DIR}" DIRECTORY)
+        if(EXISTS "${ICU_PREFIX}/lib")
+            set(ICU_LIBRARY_DIR "${ICU_PREFIX}/lib")
+        endif()
+    endif()
+
+    if(ICU_INCLUDE_DIR)
+        message(STATUS "Using ICU headers from ${ICU_INCLUDE_DIR}")
+    else()
+        message(STATUS "ICU headers not found; install icu4c or set ICU_INCLUDE_DIR")
+    endif()
+
+    if(ICU_LIBRARY_DIR)
+        message(STATUS "Using ICU libraries from ${ICU_LIBRARY_DIR}")
+    endif()
+endmacro()
+
 if(NOT WEBKIT_DIR)
     set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "")
     set(ASSERT_ENABLED "0")
@@ -555,7 +592,7 @@ if(NOT WEBKIT_DIR)
     set(WEBKIT_INCLUDE_DIR "${BUN_WORKDIR}/bun-webkit/include")
 
     if(APPLE)
-        set(ICU_INCLUDE_DIR "")
+        BUN_CONFIGURE_APPLE_ICU()
     else()
         set(ICU_INCLUDE_DIR "${BUN_WORKDIR}/bun-webkit/include/wtf/unicode")
     endif()
@@ -575,6 +612,9 @@ else()
             "${WEBKIT_DIR}/bmalloc/Headers"
             "${WEBKIT_DIR}/WTF/Headers"
         )
+        if(APPLE)
+            BUN_CONFIGURE_APPLE_ICU()
+        endif()
         set(WEBKIT_LIB_DIR "${WEBKIT_DIR}/lib")
 
         if(USE_DEBUG_JSC)
@@ -1006,10 +1046,6 @@ else()
     add_compile_definitions("ASSERT_ENABLED=1")
 endif()
 
-if(ICU_INCLUDE_DIR)
-    include_directories(${ICU_INCLUDE_DIR})
-endif()
-
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/packages/
     ${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets
@@ -1269,7 +1305,13 @@ endif()
 
 # --- ICU ---
 if(APPLE)
-    target_link_libraries(${bun} PRIVATE "icucore")
+    if(ICU_LIBRARY_DIR)
+        target_link_directories(${bun} PRIVATE ${ICU_LIBRARY_DIR})
+        target_link_libraries(${bun} PRIVATE "icui18n" "icuuc" "icudata")
+        message(STATUS "Linking ICU libraries from ${ICU_LIBRARY_DIR}")
+    else()
+        target_link_libraries(${bun} PRIVATE "icucore")
+    endif()
 endif()
 
 # --- Stripped Binary "bun"
@@ -1283,10 +1325,16 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED)
         )
     endif()
 
+    if(APPLE)
+        set(BUN_STRIP_COMMAND ${STRIP} -S -x -o ${BUN_WORKDIR}/bun ${BUN_WORKDIR}/${bun})
+    else()
+        set(BUN_STRIP_COMMAND ${STRIP} -s -x -S -o ${BUN_WORKDIR}/bun ${BUN_WORKDIR}/${bun})
+    endif()
+
     add_custom_command(
         TARGET ${bun}
         POST_BUILD
-        COMMAND ${STRIP} -s -x -S -o ${BUN_WORKDIR}/bun ${BUN_WORKDIR}/${bun}
+        COMMAND ${BUN_STRIP_COMMAND}
         COMMENT "Stripping Symbols"
     )
 endif()
@@ -1337,6 +1385,10 @@ if(USE_CUSTOM_BORINGSSL)
 else()
     include(FindBoringSSL)
     FindBoringSSL(${bun})
+endif()
+
+if(ICU_INCLUDE_DIR)
+    include_directories(${ICU_INCLUDE_DIR})
 endif()
 
 if(USE_CUSTOM_LIBARCHIVE)

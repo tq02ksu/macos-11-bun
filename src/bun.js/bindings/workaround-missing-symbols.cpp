@@ -358,7 +358,18 @@ extern "C" int __ulock_wait2(uint32_t operation, void* addr, uint64_t value,
 
 #endif
 
+#include <unicode/ubrk.h>
 #include <unicode/uchar.h>
+
+#if defined(__APPLE__)
+#undef ubrk_clone
+extern "C" UBreakIterator* ubrk_clone_78(const UBreakIterator* bi, UErrorCode* status);
+
+extern "C" UBreakIterator* ubrk_clone(const UBreakIterator* bi, UErrorCode* status)
+{
+    return ubrk_clone_78(bi, status);
+}
+#endif
 
 extern "C" bool icu_hasBinaryProperty(UChar32 cp, unsigned int prop)
 {
